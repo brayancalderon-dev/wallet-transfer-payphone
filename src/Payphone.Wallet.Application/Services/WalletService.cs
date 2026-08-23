@@ -12,7 +12,9 @@ public sealed class WalletService
     private readonly IWalletRepository _walletRepository;
     private readonly IUnitOfWork _unitOfWork;
 
-    public WalletService(IWalletRepository walletRepository, IUnitOfWork unitOfWork)
+    public WalletService(
+        IWalletRepository walletRepository,
+        IUnitOfWork unitOfWork)
     {
         _walletRepository = walletRepository;
         _unitOfWork = unitOfWork;
@@ -29,14 +31,23 @@ public sealed class WalletService
             cancellationToken);
 
         if (alreadyExists)
+        {
             throw new WalletDomainException(
                 DomainErrorCode.InvalidDocumentId,
                 "A wallet already exists for this DocumentId.");
+        }
 
-        var wallet = new WalletEntity(documentId, request.Name);
+        var wallet = new WalletEntity(
+            documentId,
+            request.Name,
+            new Money(request.Balance));
 
-        await _walletRepository.AddAsync(wallet, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await _walletRepository.AddAsync(
+            wallet,
+            cancellationToken);
+
+        await _unitOfWork.SaveChangesAsync(
+            cancellationToken);
 
         return MapToDto(wallet);
     }
@@ -54,34 +65,49 @@ public sealed class WalletService
         return MapToDto(wallet);
     }
 
-    public async Task<WalletDto> UpdateWalletAsync(int id, UpdateWalletRequest request, CancellationToken cancellationToken = default)
+    public async Task<WalletDto> UpdateWalletAsync(
+        int id,
+        UpdateWalletRequest request,
+        CancellationToken cancellationToken = default)
     {
-        var wallet = await _walletRepository.GetByIdAsync(id, cancellationToken)
-            ?? throw new NotFoundException($"Wallet with id {id} was not found.");
+        var wallet = await _walletRepository.GetByIdAsync(
+            id,
+            cancellationToken)
+            ?? throw new NotFoundException(
+                $"Wallet with id {id} was not found.");
 
         wallet.UpdateName(request.Name);
 
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(
+            cancellationToken);
 
         return MapToDto(wallet);
     }
 
-    public async Task DeleteWalletAsync(int id, CancellationToken cancellationToken = default)
+    public async Task DeleteWalletAsync(
+        int id,
+        CancellationToken cancellationToken = default)
     {
-        var wallet = await _walletRepository.GetByIdAsync(id, cancellationToken)
-            ?? throw new NotFoundException($"Wallet with id {id} was not found.");
+        var wallet = await _walletRepository.GetByIdAsync(
+            id,
+            cancellationToken)
+            ?? throw new NotFoundException(
+                $"Wallet with id {id} was not found.");
 
         wallet.EnsureCanBeDeleted();
 
         _walletRepository.Remove(wallet);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        await _unitOfWork.SaveChangesAsync(
+            cancellationToken);
     }
 
-    private static WalletDto MapToDto(WalletEntity wallet) => new(
-        wallet.Id,
-        wallet.DocumentId.Value,
-        wallet.Name,
-        wallet.Balance.Amount,
-        wallet.CreatedAt,
-        wallet.UpdatedAt);
+    private static WalletDto MapToDto(
+        WalletEntity wallet) => new(
+            wallet.Id,
+            wallet.DocumentId.Value,
+            wallet.Name,
+            wallet.Balance.Amount,
+            wallet.CreatedAt,
+            wallet.UpdatedAt);
 }

@@ -10,7 +10,10 @@ namespace Payphone.Wallet.UnitTests.Entities;
 public class WalletTests
 {
     private static WalletEntity CreateWallet() =>
-        new(new DocumentId("1234567890"), "Juan Perez");
+        new(
+            new DocumentId("1234567890"),
+            "Juan Perez",
+            Money.Zero);
 
     [Fact]
     public void Constructor_ShouldStartWithZeroBalance()
@@ -26,7 +29,8 @@ public class WalletTests
         var act = () =>
             new WalletEntity(
                 new DocumentId("1234567890"),
-                "  ");
+                "  ",
+                Money.Zero);
 
         act.Should().Throw<WalletDomainException>()
             .Which.ErrorCode.Should()
@@ -96,18 +100,21 @@ public class WalletTests
         wallet.UpdateName("Nuevo Nombre");
 
         wallet.Name.Should().Be("Nuevo Nombre");
+        wallet.UpdatedAt.Should().BeOnOrAfter(originalUpdatedAt);
     }
 
     [Fact]
     public void EnsureCanBeDeleted_WithPositiveBalance_ShouldThrowDomainException()
     {
         var wallet = CreateWallet();
+
         wallet.Credit(new Money(10));
 
         var act = () => wallet.EnsureCanBeDeleted();
 
         act.Should().Throw<WalletDomainException>()
-            .Which.ErrorCode.Should().Be(DomainErrorCode.CannotDeleteWalletWithBalance);
+            .Which.ErrorCode.Should()
+            .Be(DomainErrorCode.CannotDeleteWalletWithBalance);
     }
 
     [Fact]

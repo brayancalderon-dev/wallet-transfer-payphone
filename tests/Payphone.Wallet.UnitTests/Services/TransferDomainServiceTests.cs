@@ -26,10 +26,10 @@ public class TransferDomainServiceTests
 
         var wallet = new WalletEntity(
             new DocumentId(documentId),
-            name);
+            name,
+            new Money(initialBalance));
 
-        // Asignamos un Id diferente a cada wallet para simular
-        // las entidades después de haber sido guardadas en la BD.
+        // Simulamos un Id generado por la base de datos.
         var idProperty = typeof(WalletEntity)
             .GetProperty(nameof(WalletEntity.Id));
 
@@ -48,9 +48,6 @@ public class TransferDomainServiceTests
                 backingField.SetValue(wallet, id);
         }
 
-        if (initialBalance > 0)
-            wallet.Credit(new Money(initialBalance));
-
         return wallet;
     }
 
@@ -61,7 +58,10 @@ public class TransferDomainServiceTests
         var destination = CreateFundedWallet(0, 2);
 
         var (debit, credit) =
-            _sut.Transfer(source, destination, new Money(30));
+            _sut.Transfer(
+                source,
+                destination,
+                new Money(30));
 
         source.Balance.Amount.Should().Be(70);
         destination.Balance.Amount.Should().Be(30);
@@ -77,14 +77,17 @@ public class TransferDomainServiceTests
         var destination = CreateFundedWallet(0, 2);
 
         var act = () =>
-            _sut.Transfer(source, destination, new Money(50));
+            _sut.Transfer(
+                source,
+                destination,
+                new Money(50));
 
         act.Should().Throw<WalletDomainException>()
             .Which.ErrorCode.Should()
             .Be(DomainErrorCode.InsufficientBalance);
 
-        // Si el débito falla, el destino no debe recibir dinero.
         destination.Balance.Amount.Should().Be(0);
+        source.Balance.Amount.Should().Be(10);
     }
 
     [Fact]
@@ -93,7 +96,10 @@ public class TransferDomainServiceTests
         var wallet = CreateFundedWallet(100, 1);
 
         var act = () =>
-            _sut.Transfer(wallet, wallet, new Money(10));
+            _sut.Transfer(
+                wallet,
+                wallet,
+                new Money(10));
 
         act.Should().Throw<WalletDomainException>()
             .Which.ErrorCode.Should()

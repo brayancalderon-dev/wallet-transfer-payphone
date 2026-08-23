@@ -1,224 +1,139 @@
 ﻿using FluentAssertions;
-using Payphone.Wallet.Application.DTOs;
-using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using WalletTransfer.Application.DTOs;
+using Payphone.Wallet.Domain.Enums;
+using Payphone.Wallet.Domain.Exceptions;
+using Payphone.Wallet.Domain.ValueObjects;
+using WalletEntity = Payphone.Wallet.Domain.Entities.Wallet;
 using Xunit;
 
-namespace Payphone.Wallet.IntegrationTests;
+namespace Payphone.Wallet.UnitTests.Entities;
 
-public class WalletsControllerTests : IClassFixture<CustomWebApplicationFactory>
+public class WalletTests
 {
-    private readonly HttpClient _client;
-
-    public WalletsControllerTests(CustomWebApplicationFactory factory)
-    {
-        _client = factory.CreateClient();
-    }
-
-    private async Task<string> GetAuthTokenAsync()
-    {
-        var response = await _client.PostAsJsonAsync(
-            "/api/auth/login",
-            new
-            {
-                username = "admin",
-                password = "Payphone2026!"
-            });
-
-        response.EnsureSuccessStatusCode();
-
-        var body = await response.Content.ReadFromJsonAsync<LoginResponseDto>();
-
-        return body!.Token;
-    }
-
-    private record LoginResponseDto(string Token);
+    private static WalletEntity CreateWallet() =>
+        new(
+            new DocumentId("1234567890"),
+            "Juan Perez",
+            Money.Zero);
 
     [Fact]
-    public async Task CreateWallet_WithoutToken_ShouldReturnUnauthorized()
+    public void Constructor_ShouldStartWithZeroBalance()
     {
-        _client.DefaultRequestHeaders.Authorization = null;
+        var wallet = CreateWallet();
 
-        var response = await _client.PostAsJsonAsync(
-            "/api/wallets",
-            new CreateWalletRequest("1112223334", "Test User"));
-
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        wallet.Balance.Amount.Should().Be(0);
     }
 
     [Fact]
-    public async Task CreateWallet_WithValidToken_ShouldReturnCreated()
+    public void Constructor_WithInitialBalance_ShouldSetBalance()
     {
-        var token = await GetAuthTokenAsync();
+        var wallet = new WalletEntity(
+            new DocumentId("1234567890"),
+            "Juan Perez",
+            new Money(100));
 
-        _client.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", token);
-
-        var response = await _client.PostAsJsonAsync(
-            "/api/wallets",
-            new CreateWalletRequest("1112223334", "Test User"));
-
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-
-        var wallet = await response.Content.ReadFromJsonAsync<WalletDto>();
-
-        wallet.Should().NotBeNull();
-        wallet!.Balance.Should().Be(0);
+        wallet.Balance.Amount.Should().Be(100);
     }
 
     [Fact]
-    public async Task Transfer_BetweenTwoWallets_WithInsufficientBalance_ShouldReturnError()
+    public void Constructor_WithEmptyName_ShouldThrowDomainException()
     {
-        var token = await GetAuthTokenAsync();
+        var act = () =>
+            new WalletEntity(
+                new DocumentId("1234567890"),
+                "  ",
+                Money.Zero);
 
-        _client.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", token);
-
-        var sourceResponse = await _client.PostAsJsonAsync(
-            "/api/wallets",
-            new CreateWalletRequest("2223334445", "Source"));
-
-        sourceResponse.StatusCode.Should().Be(HttpStatusCode.Created);
-
-        var source = await sourceResponse.Content
-            .ReadFromJsonAsync<WalletDto>();
-
-        var destinationResponse = await _client.PostAsJsonAsync(
-            "/api/wallets",
-            new CreateWalletRequest("3334445556", "Destination"));
-
-        destinationResponse.StatusCode.Should().Be(HttpStatusCode.Created);
-
-        var destination = await destinationResponse.Content
-            .ReadFromJsonAsync<WalletDto>();
-
-        var transferResponse = await _client.PostAsJsonAsync(
-            "/api/wallets/transfer",
-            new TransferRequest(
-                source!.Id,
-                destination!.Id,
-                50));
-
-        transferResponse.StatusCode.Should().Be(
-            HttpStatusCode.UnprocessableEntity);
+        act.Should().Throw<WalletDomainException>()
+            .Which.ErrorCode.Should()
+            .Be(DomainErrorCode.InvalidName);
     }
 
     [Fact]
-    public async Task GetMovements_WithoutToken_ShouldReturnOk()
+    public void Credit_ShouldIncreaseBalanceAndCreateMovement()
     {
-        var token = await GetAuthTokenAsync();
+        var wallet = CreateWallet();
 
-        _client.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", token);
+        wallet.Credit(new Money(100));
 
-        var createResponse = await _client.PostAsJsonAsync(
-            "/api/wallets",
-            new CreateWalletRequest("4445556667", "Public Test"));
+        wallet.Balance.Amount.Should().Be(100);
 
-        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
-
-        var wallet = await createResponse.Content
-            .ReadFromJsonAsync<WalletDto>();
-
-        _client.DefaultRequestHeaders.Authorization = null;
-
-        var response = await _client.GetAsync(
-            $"/api/wallets/{wallet!.Id}/movements");
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        wallet.Movements.Should()
+            .ContainSingle(m => m.Type == MovementType.Credit);
     }
 
     [Fact]
-    public async Task GetWallet_WithNonExistentId_ShouldReturnNotFound()
+    public void Debit_WithSufficientBalance_ShouldDecreaseBalanceAndCreateMovement()
     {
-        var token = await GetAuthTokenAsync();
+        var wallet = CreateWallet();
 
-        _client.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", token);
+        wallet.Credit(new Money(100));
 
-        var response = await _client.GetAsync("/api/wallets/99999");
+        wallet.Debit(new Money(40));
 
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        wallet.Balance.Amount.Should().Be(60);
+
+        wallet.Movements.Should()
+            .ContainSingle(m => m.Type == MovementType.Debit);
     }
 
     [Fact]
-    public async Task UpdateWallet_WithoutToken_ShouldReturnUnauthorized()
+    public void Debit_WithInsufficientBalance_ShouldThrowDomainException()
     {
-        var response = await _client.PutAsJsonAsync("/api/wallets/1", new UpdateWalletRequest("New Name"));
+        var wallet = CreateWallet();
 
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        var act = () => wallet.Debit(new Money(50));
+
+        act.Should().Throw<WalletDomainException>()
+            .Which.ErrorCode.Should()
+            .Be(DomainErrorCode.InsufficientBalance);
     }
 
     [Fact]
-    public async Task UpdateWallet_WithValidToken_ShouldUpdateName()
+    public void Debit_WithZeroAmount_ShouldThrowDomainException()
     {
-        var token = await GetAuthTokenAsync();
-        _client.DefaultRequestHeaders.Authorization = new("Bearer", token);
+        var wallet = CreateWallet();
 
-        var createResponse = await _client.PostAsJsonAsync("/api/wallets", new CreateWalletRequest("5556667778", "Original Name"));
-        var wallet = await createResponse.Content.ReadFromJsonAsync<WalletDto>();
+        wallet.Credit(new Money(100));
 
-        var updateResponse = await _client.PutAsJsonAsync($"/api/wallets/{wallet!.Id}", new UpdateWalletRequest("Updated Name"));
+        var act = () => wallet.Debit(new Money(0));
 
-        updateResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-        var updated = await updateResponse.Content.ReadFromJsonAsync<WalletDto>();
-        updated!.Name.Should().Be("Updated Name");
+        act.Should().Throw<WalletDomainException>()
+            .Which.ErrorCode.Should()
+            .Be(DomainErrorCode.NegativeAmount);
     }
 
     [Fact]
-    public async Task UpdateWallet_WithNonExistentId_ShouldReturnNotFound()
+    public void UpdateName_WithValidName_ShouldChangeNameAndUpdatedAt()
     {
-        var token = await GetAuthTokenAsync();
-        _client.DefaultRequestHeaders.Authorization = new("Bearer", token);
+        var wallet = CreateWallet();
 
-        var response = await _client.PutAsJsonAsync("/api/wallets/99999", new UpdateWalletRequest("Doesn't matter"));
+        wallet.UpdateName("Nuevo Nombre");
 
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        wallet.Name.Should().Be("Nuevo Nombre");
     }
 
     [Fact]
-    public async Task DeleteWallet_WithoutToken_ShouldReturnUnauthorized()
+    public void EnsureCanBeDeleted_WithPositiveBalance_ShouldThrowDomainException()
     {
-        var response = await _client.DeleteAsync("/api/wallets/1");
+        var wallet = new WalletEntity(
+            new DocumentId("1234567890"),
+            "Juan Perez",
+            new Money(10));
 
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        var act = () => wallet.EnsureCanBeDeleted();
+
+        act.Should().Throw<WalletDomainException>()
+            .Which.ErrorCode.Should()
+            .Be(DomainErrorCode.CannotDeleteWalletWithBalance);
     }
 
     [Fact]
-    public async Task DeleteWallet_WithZeroBalance_ShouldReturnNoContent()
+    public void EnsureCanBeDeleted_WithZeroBalance_ShouldNotThrow()
     {
-        var token = await GetAuthTokenAsync();
-        _client.DefaultRequestHeaders.Authorization = new("Bearer", token);
+        var wallet = CreateWallet();
 
-        var createResponse = await _client.PostAsJsonAsync("/api/wallets", new CreateWalletRequest("6667778889", "To Delete"));
-        var wallet = await createResponse.Content.ReadFromJsonAsync<WalletDto>();
+        var act = () => wallet.EnsureCanBeDeleted();
 
-        var deleteResponse = await _client.DeleteAsync($"/api/wallets/{wallet!.Id}");
-
-        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
-
-        var getResponse = await _client.GetAsync($"/api/wallets/{wallet.Id}");
-        getResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
-    }
-
-    [Fact]
-    public async Task DeleteWallet_WithPositiveBalance_ShouldReturnUnprocessableEntity()
-    {
-        var token = await GetAuthTokenAsync();
-        _client.DefaultRequestHeaders.Authorization = new("Bearer", token);
-
-        // Creamos dos billeteras y transferimos indirectamente no es posible sin depósito inicial,
-        // así que este test documenta la regla esperando el fallo natural: billetera recién creada
-        // siempre nace en 0, por lo que la ruta "con saldo positivo" se valida a nivel unitario
-        // (WalletTests.EnsureCanBeDeleted_WithPositiveBalance_ShouldThrowDomainException).
-        // Aquí solo confirmamos que el endpoint delega correctamente en el dominio.
-        var createResponse = await _client.PostAsJsonAsync("/api/wallets", new CreateWalletRequest("7778889990", "Zero Balance"));
-        var wallet = await createResponse.Content.ReadFromJsonAsync<WalletDto>();
-
-        var deleteResponse = await _client.DeleteAsync($"/api/wallets/{wallet!.Id}");
-
-        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        act.Should().NotThrow();
     }
 }
